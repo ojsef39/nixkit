@@ -1,14 +1,12 @@
 {
     description = "My Nix function library";
 
-    outputs = { self }: 
-        let
-            # Import all function modules at once
-            # lib = import ./modules;
-        in {
+  inputs = {};
+
+  outputs = { ... }: {
 
             nixosModules.default  = {
-                imports = [ ./modules];
+                imports = [./modules];
             };
 
             homeModules.default = {

@@ -170,7 +170,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             button.image = NSImage(systemSymbolName: "keyboard", accessibilityDescription: "HyperKey")
             button.title = "⌘⌃⌥"
             if includeShift {
-                button.title! += "⇧"
+                button.title += "⇧"
             }
         }
         
