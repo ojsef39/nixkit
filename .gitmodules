@@ -1,0 +1,3 @@
+[submodule "modules/default_browser/defaultbrowser"]
+	path = modules/default_browser/defaultbrowser
+	url = https://github.com/kerma/defaultbrowser.git
