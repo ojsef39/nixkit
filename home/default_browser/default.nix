@@ -4,6 +4,11 @@ with lib;
 
 let
   cfg = config.programs.default-browser;
+  
+  # Build the defaultbrowser utility only on macOS
+  defaultbrowserPkg = if pkgs.stdenv.isDarwin 
+                      then pkgs.callPackage ./package.nix {} 
+                      else null;
 in {
   options.programs.default-browser = {
     enable = mkEnableOption "Default browser configuration";
@@ -18,9 +23,9 @@ in {
 
   config = mkIf cfg.enable {
     home.packages = [ 
-      # Include the defaultbrowser utility for non-Linux systems
-      (pkgs.callPackage ./defaultbrowser {})
-    ];
+      # Include the xdg-utils for Linux systems
+      pkgs.xdg-utils
+    ] ++ lib.optional pkgs.stdenv.isDarwin defaultbrowserPkg;
     
     home.activation.setDefaultBrowser = lib.hm.dag.entryAfter ["writeBoundary"] ''
       setDefaultBrowser() {
@@ -38,9 +43,9 @@ in {
           echo "Setting default browser on Linux to $browser"
           ${pkgs.xdg-utils}/bin/xdg-settings set default-web-browser "$browser.desktop"
         else
-          # Non-Linux systems use the compiled utility
+          # macOS systems use the compiled utility
           echo "Setting default browser to $browser"
-          $DRY_RUN_CMD ${config.home.homeDirectory}/.nix-profile/bin/defaultbrowser "$browser"
+          $DRY_RUN_CMD ${if pkgs.stdenv.isDarwin then "${defaultbrowserPkg}/bin/defaultbrowser" else "defaultbrowser"} "$browser"
         fi
       }
       
