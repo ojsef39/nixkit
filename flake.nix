@@ -1,7 +1,9 @@
 {
     description = "My Nix function library";
 
-  inputs = {};
+  inputs = {
+
+    };
 
   outputs = { ... }: {
 

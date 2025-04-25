@@ -1,29 +1,37 @@
-{ config, lib, pkgs, inputs, ... }:
-
-with lib;
+{ config, lib, pkgs, ... }:
 
 let
   cfg = config.services.hyperkey;
 
+hyperkey = pkgs.stdenv.mkDerivation {
+  pname = "hyperkey";
+  version = "local";
 
-  # Define the HyperKey executable using swift-builders
-  hyperkey = mkDynamicLibrary pkgs {
-    pname   = "hyperkey";
-    version = "0.1.0";
-    src     = ./.;  # Directory containing your Swift source files
-    target  = "hyperkey";
+  src = ./hyperkey;
 
-    # Pass SDK path and link required Apple frameworks
-    extraCompilerFlags = [
-      # Point swiftc at the macOS SDK in the Nix store
-      "-sdk${pkgs.darwin.apple_sdk}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
-      # Ensure linking of system frameworks
-      "-Xlinker" "-framework" "Carbon"
-      "-Xlinker" "-framework" "Cocoa"
-      "-Xlinker" "-framework" "Foundation"
-      "-Xlinker" "-framework" "ApplicationServices"
-    ];
+  dontUnpack = true;
+
+  installPhase = ''
+    runHook preInstall
+    mkdir -p $out/bin
+    cp $src $out/bin/hyperkey
+    chmod +x $out/bin/hyperkey
+    runHook postInstall
+  '';
+
+  meta = with lib; {
+    description = "Remaps Caps Lock to a Hyper key";
+    license = licenses.mit;
+    platforms = platforms.darwin;
   };
+
+  __darwinAllowLocalNetworking = true;
+
+  postInstall = ''
+    echo "NOTE: HyperKey requires accessibility permissions."
+    echo "      Please grant them in System Settings → Privacy & Security → Accessibility."
+  '';
+};
 
   launchAgentConfig = {
     ProgramArguments = [
@@ -34,16 +42,12 @@ let
     RunAtLoad = true;
     KeepAlive = true;
   };
-in
-{
-    imports = [
-        ../../lib/swift-builders.nix
-    ];
+in {
   options.services.hyperkey = {
-    enable = mkEnableOption "HyperKey service that remaps Caps Lock to Hyper key";
+    enable = lib.mkEnableOption "HyperKey service that remaps Caps Lock to a Hyper key";
 
-    normalQuickPress = mkOption {
-      type = types.bool;
+    normalQuickPress = lib.mkOption {
+      type = lib.types.bool;
       default = true;
       description = ''
         If enabled, a quick press of the Caps Lock key will send an Escape key.
@@ -51,8 +55,8 @@ in
       '';
     };
 
-    includeShift = mkOption {
-      type = types.bool;
+    includeShift = lib.mkOption {
+      type = lib.types.bool;
       default = false;
       description = ''
         If enabled, the Hyper key will include the Shift modifier (Cmd+Ctrl+Opt+Shift).
@@ -61,13 +65,8 @@ in
     };
   };
 
-  config = mkIf cfg.enable {
+  config = lib.mkIf cfg.enable {
     environment.systemPackages = [ hyperkey ];
     launchd.user.agents.hyperkey.serviceConfig = launchAgentConfig;
-
-    system.activationScripts.postActivation.text = ''
-      echo "NOTE: HyperKey requires accessibility permissions."
-      echo "      Please grant them in System Settings → Privacy & Security → Accessibility."
-    '';
   };
 }

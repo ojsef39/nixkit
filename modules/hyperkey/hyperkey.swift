@@ -27,7 +27,9 @@ class HyperKey {
     }
     
     private func setupEventTap() {
-        let eventMask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue) | (1 << CGEventType.flagsChanged.rawValue)
+        let eventMask = (1 << CGEventType.keyDown.rawValue) | 
+                      (1 << CGEventType.keyUp.rawValue) | 
+                      (1 << CGEventType.flagsChanged.rawValue)
         
         guard let eventTap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
@@ -35,107 +37,64 @@ class HyperKey {
             options: .defaultTap,
             eventsOfInterest: CGEventMask(eventMask),
             callback: { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
-                if let refcon = refcon {
-                    let hyperKey = Unmanaged<HyperKey>.fromOpaque(refcon).takeUnretainedValue()
-                    return hyperKey.handleEvent(proxy: proxy, type: type, event: event)
-                }
-                return Unmanaged.passUnretained(event)
+guard let refcon = refcon else {
+    return Unmanaged.passUnretained(event)
+}
+                
+                let hyperKey = Unmanaged<HyperKey>.fromOpaque(refcon).takeUnretainedValue()
+return hyperKey.handleEvent(proxy: proxy, type: type, event: event)
             },
             userInfo: UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
         ) else {
-            NSLog("Failed to create event tap")
+            NSLog("Failed to create event tap. Enable Input Monitoring permissions!")
             return
         }
         
         self.eventTap = eventTap
-        
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: eventTap, enable: true)
-        
-        NSLog("HyperKey service started")
-        NSLog("normalQuickPress: \(normalQuickPress)")
-        NSLog("includeShift: \(includeShift)")
     }
     
-    private func handleEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+    private func handleEvent(proxy: CGEventTapProxy?, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
         if type == .flagsChanged {
+            let keycode = event.getIntegerValueField(.keyboardEventKeycode)
             let flags = event.flags
-            let isCapsLockKey = event.getIntegerValueField(.keyboardEventKeycode) == 0x3A
             
-            if isCapsLockKey {
-                if !capsLockDown && flags.contains(.maskAlphaShift) {
-                    // Caps Lock key down
+            if keycode == 0x39 { // Caps Lock
+                if flags.contains(.maskAlphaShift) && !capsLockDown {
                     capsLockDown = true
                     lastKeyDown = Date()
                     quickPressHandled = false
-                    
-                    // Suppress the original Caps Lock event
-                    setHyperModifiers(event: event, down: true)
-                    return nil
-                } else if capsLockDown && !flags.contains(.maskAlphaShift) {
-                    // Caps Lock key up
+                    return nil // Suppress Caps Lock
+                } else if !flags.contains(.maskAlphaShift) && capsLockDown {
                     capsLockDown = false
-                    
-                    // If it was a quick press and that feature is enabled
-                    if normalQuickPress && !quickPressHandled, 
-                       let lastKeyDown = lastKeyDown, 
-                       Date().timeIntervalSince(lastKeyDown) < 0.3 {
-                        // Send Escape key
-                        let escapeEvent = CGEvent(keyboardEventSource: nil, virtualKey: 0x35, keyDown: true)
-                        escapeEvent?.post(tap: .cghidEventTap)
-                        
-                        let escapeUpEvent = CGEvent(keyboardEventSource: nil, virtualKey: 0x35, keyDown: false)
-                        escapeUpEvent?.post(tap: .cghidEventTap)
-                        
-                        quickPressHandled = true
-                    }
-                    
-                    // Remove hyper modifiers
-                    setHyperModifiers(event: event, down: false)
+                    handleQuickPress()
                     return nil
                 }
             }
         } else if capsLockDown {
-            // Mark that we've handled a key while Caps Lock is down
+            var modifiers: CGEventFlags = [.maskCommand, .maskControl, .maskAlternate]
+            if includeShift {
+                modifiers.insert(.maskShift)
+            }
+            event.flags = modifiers
             quickPressHandled = true
         }
-        
         return Unmanaged.passUnretained(event)
     }
     
-    private func setHyperModifiers(event: CGEvent, down: Bool) {
-        var flags = event.flags
+    private func handleQuickPress() {
+        guard normalQuickPress,
+              let lastKeyDown = lastKeyDown,
+              Date().timeIntervalSince(lastKeyDown) < 0.3,
+              !quickPressHandled else { return }
         
-        // Remove caps lock flag
-        flags.remove(.maskAlphaShift)
-        
-        if down {
-            // Add hyper modifier flags
-            flags.insert(.maskCommand)
-            flags.insert(.maskControl)
-            flags.insert(.maskAlternate)
-            
-            if includeShift {
-                flags.insert(.maskShift)
-            }
-        } else {
-            // Remove hyper modifier flags
-            flags.remove(.maskCommand)
-            flags.remove(.maskControl)
-            flags.remove(.maskAlternate)
-            
-            if includeShift {
-                flags.remove(.maskShift)
-            }
-        }
-        
-        // Create and post a synthetic flags changed event
-        if let flagsEvent = CGEvent(source: nil) {
-            flagsEvent.type = .flagsChanged
-            flagsEvent.flags = flags
-            flagsEvent.post(tap: .cghidEventTap)
-        }
+        let src = CGEventSource(stateID: .combinedSessionState)
+        let keyDown = CGEvent(keyboardEventSource: src, virtualKey: 0x35, keyDown: true)
+        let keyUp = CGEvent(keyboardEventSource: src, virtualKey: 0x35, keyDown: false)
+        keyDown?.post(tap: .cghidEventTap)
+        keyUp?.post(tap: .cghidEventTap)
     }
 }
 
@@ -147,7 +106,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         var normalQuickPress = true
         var includeShift = false
         
-        // Parse command line arguments
         for i in 1..<args.count {
             if args[i] == "--no-quick-press" {
                 normalQuickPress = false
@@ -156,25 +114,19 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         
-        // Request accessibility permissions
-        let options: NSDictionary = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         if !AXIsProcessTrustedWithOptions(options) {
-            NSLog("HyperKey requires accessibility permissions. Please grant them in System Preferences.")
+            NSLog("Enable Accessibility in System Settings → Privacy → Accessibility")
         }
         
         hyperKey = HyperKey(normalQuickPress: normalQuickPress, includeShift: includeShift)
         
-        // Add menu bar icon
         let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = statusItem.button {
             button.image = NSImage(systemSymbolName: "keyboard", accessibilityDescription: "HyperKey")
-            button.title = "⌘⌃⌥"
-            if includeShift {
-                button.title += "⇧"
-            }
+            button.title = "⌘⌃⌥" + (includeShift ? "⇧" : "")
         }
         
-        // Create menu
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "HyperKey Active", action: nil, keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
@@ -183,8 +135,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-// Start the application
-let app = NSApplication.shared
+// Strong reference to retain delegate
 let delegate = AppDelegate()
-app.delegate = delegate
-app.run()
+NSApplication.shared.delegate = delegate
+NSApplication.shared.run()

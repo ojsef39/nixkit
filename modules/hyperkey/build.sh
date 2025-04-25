@@ -1,3 +1,4 @@
 #!/bin/bash
 
-swiftc -o hyperkey hyperkey.swift -framework Cocoa -framework Carbon
+swiftc hyperkey.swift -framework Cocoa -framework Carbon
+codesign --entitlements hyperkey.entitlements -fs - hyperkey
