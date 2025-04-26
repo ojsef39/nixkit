@@ -4,24 +4,20 @@ set -e pipefail
 
 # Locate the SDK path
 default_sdk="$(xcrun --show-sdk-path)"
+bin_name=hyperkey
 
 
 swiftc \
     -sdk "$default_sdk" \
+    -O \
     -framework Cocoa \
     -framework Carbon \
     -framework Foundation \
-    -framework IOKit \
-    -framework ApplicationServices \
     hyperkey.swift \
-    -o hyperkey
+    -o "$bin_name"
 
 
 # Make the output executable
-chmod +x HyperKey
+chmod +x "$bin_name"
 
-echo "Build complete: ./hyperkey"
-
-#
-# hidutil property --set '{"UserKeyMapping":[]}'
-# hidutil property --set '{"UserKeyMapping":[{"HIDKeyboardModifierMappingSrc":0x700000039,"HIDKeyboardModifierMappingDst":0x70000006D}]}' > /dev/null
+echo "Build complete: ./$bin_name"
