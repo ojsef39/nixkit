@@ -41,6 +41,10 @@ hyperkey = pkgs.stdenv.mkDerivation {
     ++ (if cfg.includeShift then ["--include-shift"] else []);
     RunAtLoad = true;
     KeepAlive = true;
+    EnvironmentVariables = {
+        PATH = "/run/current-system/sw/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+    };
+    SessionCreate = true;
   };
 in {
   options.services.hyperkey = {

@@ -1,18 +1,18 @@
 {
-    description = "My Nix function library";
+    description = "Various modules and utilities for NixOS and nix-darwin";
 
-  inputs = {
+    inputs = {
 
     };
 
-  outputs = { ... }: {
+    outputs = { ... }: {
 
-            nixosModules.default  = {
-                imports = [./modules];
-            };
-
-            homeModules.default = {
-                imports = [./home];
-            };
+        nixosModules.default  = {
+            imports = [./modules];
         };
+
+        homeModules.default = {
+            imports = [./home];
+        };
+    };
 }
