@@ -1,7 +1,6 @@
 #!/bin/bash
 
-# Build HyperKey with private IOKit HID symbols
-# Ensure we link against IOKit and ApplicationServices frameworks
+set -e pipefail
 
 # Locate the SDK path
 default_sdk="$(xcrun --show-sdk-path)"

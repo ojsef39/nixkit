@@ -2,8 +2,18 @@ import Carbon
 import Cocoa
 import Foundation
 
+// Global reference to HyperKey instance (to call methods from signal handlers)
+var hyperKeyInstance: HyperKey? = nil
+
+// C function to handle signals
+func handleSignal(_ signal: Int32) {
+    // Call the reset function on the HyperKey instance
+    hyperKeyInstance?.resetKeyMapping()
+    exit(0)  // Exit after resetting key mappings
+}
+
 // MARK: - CapsLock Manager
-// Source: https://github.com/gkpln3/CapsLockNoDelay/blob/main/README.md
+// Source: https://github.com/gkpln3/CapsLockNoDelay
 
 protocol Toggleable {
     func toggleState()
@@ -11,35 +21,54 @@ protocol Toggleable {
 
 class CapsLockManager: Toggleable {
     var currentState = false
-    
+
     init() {
         currentState = Self.getCapsLockState()
     }
-    
+
     public func toggleState() {
-//        print("setting state \(!self.currentState)")
         self.setCapsLockState(!self.currentState)
     }
-    
+
     public func setCapsLockState(_ state: Bool) {
         self.currentState = state
         var ioConnect: io_connect_t = .init(0)
-        let ioService = IOServiceGetMatchingService(kIOMasterPortDefault, IOServiceMatching(kIOHIDSystemClass))
-        IOServiceOpen(ioService, mach_task_self_, UInt32(kIOHIDParamConnectType), &ioConnect)
+        let ioService = IOServiceGetMatchingService(
+            kIOMainPortDefault,
+            IOServiceMatching(kIOHIDSystemClass)
+        )
+        IOServiceOpen(
+            ioService,
+            mach_task_self_,
+            UInt32(kIOHIDParamConnectType),
+            &ioConnect
+        )
         IOHIDSetModifierLockState(ioConnect, Int32(kIOHIDCapsLockState), state)
         IOServiceClose(ioConnect)
     }
 
     public static func getCapsLockState() -> Bool {
         var ioConnect: io_connect_t = .init(0)
-        let ioService = IOServiceGetMatchingService(kIOMasterPortDefault, IOServiceMatching(kIOHIDSystemClass))
-        IOServiceOpen(ioService, mach_task_self_, UInt32(kIOHIDParamConnectType), &ioConnect)
+        let ioService = IOServiceGetMatchingService(
+            kIOMainPortDefault,
+            IOServiceMatching(kIOHIDSystemClass)
+        )
+        IOServiceOpen(
+            ioService,
+            mach_task_self_,
+            UInt32(kIOHIDParamConnectType),
+            &ioConnect
+        )
 
         var modifierLockState = false
-        IOHIDGetModifierLockState(ioConnect, Int32(kIOHIDCapsLockState), &modifierLockState)
+        IOHIDGetModifierLockState(
+            ioConnect,
+            Int32(kIOHIDCapsLockState),
+            &modifierLockState
+        )
 
         IOServiceClose(ioConnect)
-        return modifierLockState;
+        return modifierLockState
     }
 }
 
@@ -59,6 +88,7 @@ class HyperKey {
         self.includeShift = includeShift
         setupEventTap()
         mapCapsLockToF18()
+        registerSignalHandlers()  // Register signal handlers
     }
 
     deinit {
@@ -69,6 +99,7 @@ class HyperKey {
         resetKeyMapping()
     }
 
+    // Source: https://medium.com/ryan-hanson/key-remapping-built-into-macos-c7953b1a62e4
     private func mapCapsLockToF18() {
         let mapping: [[String: Any]] = [
             [
@@ -79,7 +110,7 @@ class HyperKey {
         executeHidutil(payload: ["UserKeyMapping": mapping])
     }
 
-    private func resetKeyMapping() {
+    func resetKeyMapping() {
         executeHidutil(payload: ["UserKeyMapping": []])
     }
 
@@ -180,6 +211,12 @@ class HyperKey {
         }
     }
 
+    // Register signal handlers for SIGINT, SIGTERM, and SIGQUIT
+    private func registerSignalHandlers() {
+        signal(SIGINT, handleSignal)
+        signal(SIGTERM, handleSignal)
+        signal(SIGQUIT, handleSignal)
+    }
 }
 
 // MARK: - AppDelegate
@@ -209,6 +246,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             normalQuickPress: normalQuickPress,
             includeShift: includeShift
         )
+        hyperKeyInstance = hyperKey  // Set global reference to the instance
+
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(applicationWillTerminate(_:)),
