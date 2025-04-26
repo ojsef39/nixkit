@@ -1,8 +1,49 @@
-import Cocoa
 import Carbon
+import Cocoa
 import Foundation
-import IOKit.hid
 
+// MARK: - CapsLock Manager
+// Source: https://github.com/gkpln3/CapsLockNoDelay/blob/main/README.md
+
+protocol Toggleable {
+    func toggleState()
+}
+
+class CapsLockManager: Toggleable {
+    var currentState = false
+    
+    init() {
+        currentState = Self.getCapsLockState()
+    }
+    
+    public func toggleState() {
+//        print("setting state \(!self.currentState)")
+        self.setCapsLockState(!self.currentState)
+    }
+    
+    public func setCapsLockState(_ state: Bool) {
+        self.currentState = state
+        var ioConnect: io_connect_t = .init(0)
+        let ioService = IOServiceGetMatchingService(kIOMasterPortDefault, IOServiceMatching(kIOHIDSystemClass))
+        IOServiceOpen(ioService, mach_task_self_, UInt32(kIOHIDParamConnectType), &ioConnect)
+        IOHIDSetModifierLockState(ioConnect, Int32(kIOHIDCapsLockState), state)
+        IOServiceClose(ioConnect)
+    }
+
+    public static func getCapsLockState() -> Bool {
+        var ioConnect: io_connect_t = .init(0)
+        let ioService = IOServiceGetMatchingService(kIOMasterPortDefault, IOServiceMatching(kIOHIDSystemClass))
+        IOServiceOpen(ioService, mach_task_self_, UInt32(kIOHIDParamConnectType), &ioConnect)
+
+        var modifierLockState = false
+        IOHIDGetModifierLockState(ioConnect, Int32(kIOHIDCapsLockState), &modifierLockState)
+
+        IOServiceClose(ioConnect)
+        return modifierLockState;
+    }
+}
+
+// MARK: - HyperKey Class
 class HyperKey {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -11,130 +52,179 @@ class HyperKey {
     private var lastKeyDown: Date?
     private var f18Down = false
     private var quickPressHandled = false
+    private var capsLockManager = CapsLockManager()
 
     init(normalQuickPress: Bool, includeShift: Bool) {
         self.normalQuickPress = normalQuickPress
         self.includeShift = includeShift
         setupEventTap()
+        mapCapsLockToF18()
     }
 
     deinit {
-        if let eventTap = eventTap {
-            CFMachPortInvalidate(eventTap)
+        if let tap = eventTap { CFMachPortInvalidate(tap) }
+        if let src = runLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetCurrent(), src, .commonModes)
         }
-        if let runLoopSource = runLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
-        }
+        resetKeyMapping()
+    }
+
+    private func mapCapsLockToF18() {
+        let mapping: [[String: Any]] = [
+            [
+                "HIDKeyboardModifierMappingSrc": 0x7_0000_0039,
+                "HIDKeyboardModifierMappingDst": 0x7_0000_006D,
+            ]
+        ]
+        executeHidutil(payload: ["UserKeyMapping": mapping])
+    }
+
+    private func resetKeyMapping() {
+        executeHidutil(payload: ["UserKeyMapping": []])
+    }
+
+    private func executeHidutil(payload: [String: Any]) {
+        guard
+            let data = try? JSONSerialization.data(
+                withJSONObject: payload,
+                options: []
+            ),
+            let json = String(data: data, encoding: .utf8)
+        else { return }
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/hidutil")
+        proc.arguments = ["property", "--set", json]
+        do {
+            try proc.run()
+            proc.waitUntilExit()
+        } catch { NSLog("hidutil failed: \(error)") }
     }
 
     private func setupEventTap() {
-        let eventMask = (1 << CGEventType.keyDown.rawValue) | 
-                        (1 << CGEventType.keyUp.rawValue) | 
-                        (1 << CGEventType.flagsChanged.rawValue)
+        let mask =
+            (1 << CGEventType.keyDown.rawValue)
+            | (1 << CGEventType.keyUp.rawValue)
+            | (1 << CGEventType.flagsChanged.rawValue)
 
-        guard let eventTap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .defaultTap,
-            eventsOfInterest: CGEventMask(eventMask),
-            callback: { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
-                guard let refcon = refcon else {
-                    return Unmanaged.passUnretained(event)
-                }
-                let hyperKey = Unmanaged<HyperKey>.fromOpaque(refcon).takeUnretainedValue()
-                return hyperKey.handleEvent(proxy: proxy, type: type, event: event)
-            },
-            userInfo: UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
-        ) else {
-            NSLog("Failed to create event tap. Enable Input Monitoring permissions!")
+        guard
+            let tap = CGEvent.tapCreate(
+                tap: .cgSessionEventTap,
+                place: .headInsertEventTap,
+                options: .defaultTap,
+                eventsOfInterest: CGEventMask(mask),
+                callback: { (proxy, type, event, ref) in
+                    let obj = Unmanaged<HyperKey>.fromOpaque(ref!)
+                        .takeUnretainedValue()
+                    return obj.handleEvent(
+                        proxy: proxy,
+                        type: type,
+                        event: event
+                    )
+                },
+                userInfo: UnsafeMutableRawPointer(
+                    Unmanaged.passUnretained(self).toOpaque()
+                )
+            )
+        else {
+            NSLog(
+                "Failed to create event tap; enable Accessibility permissions."
+            )
             return
         }
-
-        self.eventTap = eventTap
-        runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, eventTap, 0)
+        eventTap = tap
+        runLoopSource = CFMachPortCreateRunLoopSource(
+            kCFAllocatorDefault,
+            tap,
+            0
+        )
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
-        CGEvent.tapEnable(tap: eventTap, enable: true)
+        CGEvent.tapEnable(tap: tap, enable: true)
     }
 
-    private func handleEvent(proxy: CGEventTapProxy?, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+    private func handleEvent(
+        proxy: CGEventTapProxy?,
+        type: CGEventType,
+        event: CGEvent
+    ) -> Unmanaged<CGEvent>? {
         if type == .keyDown || type == .keyUp {
-            let keycode = event.getIntegerValueField(.keyboardEventKeycode)
-            if keycode == UInt32(kVK_F18) { // F18 keycode
+            let code = UInt8(event.getIntegerValueField(.keyboardEventKeycode))
+            if code == UInt8(kVK_F18) {
                 if type == .keyDown {
-                    // print("Key down")
                     f18Down = true
                     lastKeyDown = Date()
                     quickPressHandled = false
-                    return nil // Suppress F18 key down
                 } else {
-                    // print("Key up")
                     f18Down = false
                     handleQuickPress()
-                    return nil // Suppress F18 key up
                 }
+                return nil
             }
         }
-        
+
         if f18Down {
-            var modifiers: CGEventFlags = [.maskCommand, .maskControl, .maskAlternate]
-            if includeShift {
-                modifiers.insert(.maskShift)
-            }
-            event.flags = modifiers
+            var mods: CGEventFlags = [
+                .maskCommand, .maskControl, .maskAlternate,
+            ]
+            if includeShift { mods.insert(.maskShift) }
+            event.flags = mods
             quickPressHandled = true
         }
-        
         return Unmanaged.passUnretained(event)
     }
 
     private func handleQuickPress() {
-        let date = Date().timeIntervalSince(lastKeyDown!)
-        print("\(date)")
-        guard normalQuickPress, let lastKeyDown = lastKeyDown, Date().timeIntervalSince(lastKeyDown) > 0.05, !quickPressHandled else { return }
-        //TODO: impelement caps lock toggle
+        guard normalQuickPress, let down = lastKeyDown else { return }
+        if Date().timeIntervalSince(down) > 0.02 && !quickPressHandled {
+            capsLockManager.toggleState()
+            quickPressHandled = true
+        }
     }
-
 
 }
 
+// MARK: - AppDelegate
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var hyperKey: HyperKey?
+    private var statusItem: NSStatusItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let args = CommandLine.arguments
         var normalQuickPress = true
         var includeShift = false
-
-        for i in 1..<args.count {
-            if args[i] == "--no-quick-press" {
+        for arg in CommandLine.arguments.dropFirst() {
+            if arg == "--no-quick-press" {
                 normalQuickPress = false
-            } else if args[i] == "--include-shift" {
+            } else if arg == "--include-shift" {
                 includeShift = true
             }
         }
-
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        let options =
+            [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
+            as CFDictionary
         if !AXIsProcessTrustedWithOptions(options) {
-            NSLog("Enable Accessibility in System Settings → Privacy → Accessibility")
+            NSLog(
+                "Enable Accessibility in System Settings → Privacy → Accessibility"
+            )
         }
+        hyperKey = HyperKey(
+            normalQuickPress: normalQuickPress,
+            includeShift: includeShift
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(applicationWillTerminate(_:)),
+            name: NSApplication.willTerminateNotification,
+            object: nil
+        )
+    }
 
-        hyperKey = HyperKey(normalQuickPress: normalQuickPress, includeShift: includeShift)
-
-        let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "keyboard", accessibilityDescription: "HyperKey")
-            button.title = "⌘⌃⌥" + (includeShift ? "⇧" : "")
-        }
-
-        let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "HyperKey Active", action: nil, keyEquivalent: ""))
-        menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
-        statusItem.menu = menu
+    @objc func applicationWillTerminate(_ notification: Notification) {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/hidutil")
+        proc.arguments = ["property", "--set", "{\"UserKeyMapping\":[]}"]
+        try? proc.run()
     }
 }
 
-// Strong reference to retain delegate
 let delegate = AppDelegate()
 NSApplication.shared.delegate = delegate
 NSApplication.shared.run()
