@@ -21,12 +21,20 @@ home-manager = {
 };
 ```
 Add the nix module:
+
+**On NixOS:**
 ```nix
 modules = [
     inputs.nixkit.nixosModules.default
 ];
 ```
 
+**On macOS:**
+```nix
+modules = [
+    inputs.nixkit.darwinModules.default
+];
+```
 
 # Home Manager Modules
 
