@@ -8,7 +8,11 @@
     outputs = { ... }: {
 
         nixosModules.default  = {
-            imports = [./modules];
+            imports = [./modules/shared ./modules/nixos];
+        };
+
+        darwinModules.default  = {
+            imports = [./modules/shared ./modules/darwin];
         };
 
         homeModules.default = {

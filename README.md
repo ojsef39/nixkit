@@ -1,7 +1,7 @@
 # A Collection of various nix utilities
 
 
-## Installation
+# Installation
 
 
 Add it to your `flake.nix` inputs:
@@ -28,9 +28,9 @@ modules = [
 ```
 
 
-## Home Manager Modules
+# Home Manager Modules
 
-### Set Default Browser
+## Set Default Browser
 
 To set the default browser on macOS and Linux use the following:
 ```nix
@@ -42,11 +42,13 @@ programs.default-browser = {
 ```
 
 
-## System Modules
+# System Modules
+
+## Darwin
 
 ### Hyperkey
 
-`hyperkey` is a simple serivce that maps caps-lock to cmd+opt+ctrl or optionally cmd+opt+ctrl+shift.
+`hyperkey` is a simple service that maps caps-lock to cmd+opt+ctrl or optionally cmd+opt+ctrl+shift.
 Simply enable it using the following snippet inside your `configuration.nix`:
 ```nix
 services.hyperkey = {
@@ -55,8 +57,28 @@ services.hyperkey = {
     includeShift = false; # Hyper key will be Cmd+Ctrl+Opt (without Shift)
 };
 ```
-On first start it will ask for accessibility permission. Afterwards you may need to restart the service by running `killall hyperkey` for the permissions to
+On first start it will ask for accessibility permission. Afterward you may need to restart the service by running `killall hyperkey` for the permissions to
 take effect.
+
+### Custom Icons
+
+You can configure custom icons on macOS using the following snippet:
+```nix
+ environment.customIcons = {
+    enable = true;
+    icons = [
+      {
+        path = "/Applications/Notion.app";
+        icon = ./icons/notion.icns;
+      }
+    ];
+  };
+```
+Source: https://github.com/ryanccn/nix-darwin-custom-icons
+
+## NixOS
+
+## Shared
 
 
 ### Declare Folders
